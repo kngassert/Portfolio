@@ -23,5 +23,8 @@ Plains_fire_danger.png:<br>
 var_histogram_percentile_doy.ipynb:<br>
 - Jupyter Notebook to create Fire Weather Index histograms detailing changes in the extreme tail-end of the distribution over various time periods for multiple locations.
 
+warming_levels_mergetime_ISIMIP.py:<br>
+- Script to parallelize the merging of single-year climate model data into multi-year files, based on .csv file with warming levels and associated start/end years.
+
 wbgt_NWS.ipynb:<br>
 - Jupyter Notebook to calculate Wet Bulb Globe Temperatures for a location over multiple time periods.
