@@ -2,31 +2,36 @@ from netCDF4 import Dataset
 import metpy.calc as mpcalc
 from metpy.units import units
 import numpy as np
-from daymet_functions import downloadDaymetLatLonBox, createGridFile, cdoRemap, loadDaymetDims, saveNetCDF, mv2GoogleBucket, mergetime
+from daymet_functions import downloadDaymetLatLonBox, downloadDaymetGee, createGridFile, cdoRemap, loadDaymetDims, saveNetCDF, mv2GoogleBucket, mergetime
 from os import path, makedirs, remove
 import glob
 
 years = np.arange(1985, 2014 + 1)  # +1 to last year so it's included
 region = 'na'  # 'na', 'pr', 'hi'
-loc = 'JeffersonCoKY'
-variables = ['pr']  # 'hurs', 'pr', 'rsds']  # if 'hurs' in variables, 'tas' must also be included. If 'tas' in variables, tasmax and tasmin will automatically be included.
+loc = 'EudoraWilmotAR'
+#loc = 'CE_GEE'
+variables = ['tas', 'hurs', 'rsds']  # if 'hurs' in variables, 'tas' must also be included. If 'tas' in variables, tasmax and tasmin will automatically be included.
 
 tas_units, hurs_units, pr_units, rsds_units = 'K', '%', 'mm', 'W m-2'
 
-lon1, lon2, lat1, lat2 = -86.0, -85.38, 37.98, 38.4
+lon1, lon2, lat1, lat2 = -91.75, -91.05, 32.98,  33.25
+#lon1, lon2, lat1, lat2 = -70.7, -70.38, 41.49,  41.8
 
 # if projection == latlon, user specifies regrid resolution (regrid_res, along with regrid_coarser_bool) to create a grid file, OR specifies a pre-existing grid file (grid_file) for remapping lcc -> latlon
 projection = 'latlon'  # lcc or latlon
 regrid_method = 'remapbil'  # cdo remap method to use for lcc -> latlon regrid
 regrid_res = 0.008  # desired regrid resolution in degrees (0.008 deg ~= 1km longitude at equator)
 regrid_coarser_bool = True  # if set to True and average resolution of data is coarser than 'regrid_res', data will be regrid to retain average (coarser) resolution of data
-grid_file = ''  # pre-existing grid file (or netcdf) to use in remapping. If it doesn't exist, set to '' (emtpy string) and code will create a file based on 'regrid_res'
+grid_file = f'{loc}_grid.txt'  # pre-existing grid file (or netcdf) to use in remapping. If it doesn't exist, set to '' (emtpy string) and code will create a file based on 'regrid_res'
 
-mounted_bucket_name = '<gcloud_bucket>'
+mounted_bucket_name = 'kgassert_bucket'
 ready4ba_save_path = f'Daymet/{loc}/ready4ba'
 
+# specify source for data download:'thredds' or 'gee' -> default data download method should be thredds, but try gee when not working properly. Thredds is set up to work with both 'latlon' and 'lcc' projection but GEE method will regrid to latlon before downloading.
+dl_method = 'gee'
+
 # path to file containing Google Cloud credentials
-creds = f'{mounted_bucket_name}/gcloud_creds.json'
+creds = f'{mounted_bucket_name}/kgassert-main-ce2846b787c0.json'
 
 ###
 
@@ -35,14 +40,22 @@ if not path.exists(f'{mounted_bucket_name}/{ready4ba_save_path}'):
 
 if grid_file == '':
     create_gridfile = True
-    grid_file = f'{loc}_grid.txt'
+    grid_file = f'{loc}_grid.txt'  # set name of grid file to create, if pre-existing file was not specified by user
 else:
     create_gridfile = False
 
 for year in years:    
     if 'tas' in variables:
-        tmax_wget = downloadDaymetLatLonBox('tmax', loc, region, year, lon1, lon2, lat1, lat2)
-        tmin_wget = downloadDaymetLatLonBox('tmin', loc, region, year, lon1, lon2, lat1, lat2)
+        if dl_method == 'thredds':
+            tmax_wget = downloadDaymetLatLonBox('tmax', loc, region, year, lon1, lon2, lat1, lat2)
+            tmin_wget = downloadDaymetLatLonBox('tmin', loc, region, year, lon1, lon2, lat1, lat2)
+
+        elif dl_method == 'gee':
+            tmax_wget = downloadDaymetGee('tmax', loc, region, year, lon1, lon2, lat1, lat2)
+            tmin_wget = downloadDaymetGee('tmin', loc, region, year, lon1, lon2, lat1, lat2)
+
+        else:
+            print('Error! Data download method not recognized.')
 
         if projection == 'latlon':
             # remap from lcc to latlon grid
@@ -65,7 +78,7 @@ for year in years:
         else:
             tmax_fn = tmax_wget
             tmin_fn = tmin_wget
-            
+
         # open data
         tmax_file = Dataset(tmax_fn, 'r')
         tmin_file = Dataset(tmin_fn, 'r')
@@ -125,7 +138,14 @@ for year in years:
         
 ###
     if 'hurs' in variables:
-        vp_wget = downloadDaymetLatLonBox('vp', loc, region, year, lon1, lon2, lat1, lat2)
+        if dl_method == 'thredds':
+            vp_wget = downloadDaymetLatLonBox('vp', loc, region, year, lon1, lon2, lat1, lat2)
+
+        elif dl_method == 'gee':
+            vp_wget = downloadDaymetGee('vp', loc, region, year, lon1, lon2, lat1, lat2)
+
+        else:
+            print('Error! Data download method not recognized.')
 
         if projection == 'latlon':
             # remap from lcc to latlon grid
@@ -142,7 +162,7 @@ for year in years:
             
         else:
             vp_fn = vp_wget
-        
+
         # open regridded data
         vp_file = Dataset(vp_fn, 'r')  
         ea = vp_file.variables['vp'][:]
@@ -173,7 +193,12 @@ for year in years:
         
 ###
     if 'pr' in variables:
-        pr_wget = downloadDaymetLatLonBox('prcp', loc, region, year, lon1, lon2, lat1, lat2)    
+        if dl_method == 'thredds':
+            pr_wget = downloadDaymetLatLonBox('prcp', loc, region, year, lon1, lon2, lat1, lat2)    
+        elif dl_method == 'gee':
+            pr_wget = downloadDaymetGee('prcp', loc, region, year, lon1, lon2, lat1, lat2)
+        else:
+            print('Error! Data download method not recognized.')
 
         if projection == 'latlon':
             # remap from lcc to latlon grid
@@ -190,7 +215,7 @@ for year in years:
         
         else:
             pr_fn = pr_wget
-            
+
         # open regridded data
         pr_file = Dataset(pr_fn, 'r')
         pr_data = pr_file.variables['prcp'][:]
@@ -214,8 +239,16 @@ for year in years:
 
 ###
     if 'rsds' in variables:
-        srad_wget = downloadDaymetLatLonBox('srad', loc, region, year, lon1, lon2, lat1, lat2)
-        dayl_wget = downloadDaymetLatLonBox('dayl', loc, region, year, lon1, lon2, lat1, lat2)
+        if dl_method == 'thredds':
+            srad_wget = downloadDaymetLatLonBox('srad', loc, region, year, lon1, lon2, lat1, lat2)
+            dayl_wget = downloadDaymetLatLonBox('dayl', loc, region, year, lon1, lon2, lat1, lat2)
+
+        elif dl_method == 'gee':
+            srad_wget = downloadDaymetGee('srad', loc, region, year, lon1, lon2, lat1, lat2)
+            dayl_wget = downloadDaymetGee('dayl', loc, region, year, lon1, lon2, lat1, lat2)
+
+        else:
+            print('Error! Data download method not recongized.')
 
         if projection == 'latlon':
             # remap from lcc to latlon grid
@@ -282,11 +315,30 @@ for var in variables:
         yr_filename = f'{loc}_{var}_daymet_{region}_????_ready4ba.nc'
         yrs_filename = f'{loc}_{var}_daymet_{region}_{years[0]}-{years[-1]}_ready4ba.nc'
         mergetime(yr_filename, yrs_filename)
-    else:
+    else:  # only one year, so no merge necessary
         yrs_filename = f'{loc}_{var}_daymet_{region}_{years[0]}_ready4ba.nc'
     mv2GoogleBucket(yrs_filename, mounted_bucket_name, ready4ba_save_path, creds)    
     
-    if var == 'tas':            
+    if var == 'tas':
+#        # merge and upload tmax and tmin raw data
+#        for var1 in ['tmax', 'tmin']:
+#            if projection == 'latlon':
+#                if len(years) > 1:
+#                    yr_filename = f'{loc}_{var1}_daymet_{region}_regrid2latlon_????.nc'
+#                    yrs_filename = f'{loc}_{var1}_daymet_{region}_regrid2latlon_{years[0]}-{years[-1]}.nc'
+#                    mergetime(yr_filename, yrs_filename)
+#                else:
+#                    yrs_filename = f'{loc}_{var1}_daymet_{region}_regrid2latlon_{years[0]}.nc'
+#            else:
+#                if len(years) > 1:
+#                    yr_filename = f'{loc}_daymet_{region}_v4_daily_{var1}_????.nc'
+#                    yrs_filename = f'{loc}_daymet_{region}_v4_daily_{var1}_{years[0]}-{years[-1]}.nc'
+#                    mergetime(yr_filename, yrs_filename)
+#                else:
+#                    yrs_filename = f'{loc}_daymet_{region}_v4_daily_{var1}_{years[0]}.nc'
+
+#            mv2GoogleBucket(yrs_filename, mounted_bucket_name, raw_save_path, creds)
+            
         # upload 'ready4ba' tasrange and tasskew too            
         for var2 in ['tasrange', 'tasskew']:
             if len(years) > 1:
@@ -297,9 +349,49 @@ for var in variables:
                 yrs_filename = f'{loc}_{var2}_daymet_{region}_{years[0]}_ready4ba.nc'
             mv2GoogleBucket(yrs_filename, mounted_bucket_name, ready4ba_save_path, creds)    
 
-# remove data from current working directory (desired files have already been uploaded to Google Cloud bucket)
+#    if var == 'hurs':
+        # merge and upload vp raw data
+#        if projection == 'latlon':            
+#            if len(years) > 1:
+#                yr_filename = f'{loc}_vp_daymet_{region}_regrid2latlon_????.nc'
+#                yrs_filename = f'{loc}_vp_daymet_{region}_regrid2latlon_{years[0]}-{years[-1]}.nc'
+#                mergetime(yr_filename, yrs_filename)
+#            else:
+#                yrs_filename = f'{loc}_vp_daymet_{region}_regrid2latlon_{years[0]}.nc'
+#        else:
+#            if len(years) > 1:
+#                yr_filename = f'{loc}_daymet_{region}_v4_daily_{var}_????.nc' 
+#                yrs_filename = f'{loc}_daymet_{region}_v4_daily_{var}_{years[0]}-{years[-1]}.nc' 
+#                mergetime(yr_filename, yrs_filename)            
+#            else:
+#                yrs_filename = f'{loc}_daymet_{region}_v4_daily_{var}_{years[0]}.nc' 
+
+#        mv2GoogleBucket(yrs_filename, mounted_bucket_name, raw_save_path, creds)
+            
+#    if var == 'pr':
+        # merge and upload pr raw data
+#        if projection == 'latlon':
+#            if len(years) > 1:
+#                yr_filename = f'{loc}_{var}_daymet_{region}_regrid2latlon_????.nc'
+#                yrs_filename = f'{loc}_{var}_daymet_{region}_regrid2latlon_{years[0]}-{years[-1]}.nc'
+#                mergetime(yr_filename, yrs_filename)
+#            else:
+#                yrs_filename = f'{loc}_{var}_daymet_{region}_regrid2latlon_{years[0]}.nc'
+#        else:       
+#            if len(years) > 1:
+#                yr_filename = f'{loc}_daymet_{region}_v4_daily_{var}_????.nc' 
+#                yrs_filename = f'{loc}_daymet_{region}_v4_daily_{var}_{years[0]}-{years[-1]}.nc' 
+#                mergetime(yr_filename, yrs_filename)            
+#            else:
+#                yrs_filename = f'{loc}_daymet_{region}_v4_daily_{var}_{years[0]}.nc' 
+                
+#        mv2GoogleBucket(yrs_filename, mounted_bucket_name, raw_save_path, creds)
+
+
+# remove data files from current working directory (files have already been uploaded to Google Cloud bucket)
 if projection == 'latlon':
     files2remove = glob.glob(f'{loc}_*_daymet_{region}_regrid2latlon_*.nc')
+
     # move grid file to Google Cloud
     mv2GoogleBucket(grid_file, mounted_bucket_name, ready4ba_save_path, creds)
     remove(grid_file)

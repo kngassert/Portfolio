@@ -2,9 +2,83 @@ import wget
 from netCDF4 import Dataset
 import numpy as np
 from google.cloud import storage
+import geedim as gd
+import ee
+from osgeo import gdal
+import glob
+import os
+import pandas as pd
+from cftime import date2num
+from pyproj import Transformer
 from cdo import Cdo
 cdo = Cdo()
 cdo.debug = True
+
+
+###
+
+
+def daymet_gee_daily2yearly(var_name, year, fn_list, save_fn, dates):
+    '''
+    
+    Merge daily GEE files into a one-year file.
+
+    Parameters
+    ----------
+    var_name : str
+        Variable short name.
+    year : int
+        Year for merging daily files.
+    fn_list : list of str
+        List of filenames to merge.
+    save_fn : str
+        Filename for merged one-year file.
+
+    Returns
+    -------
+    NONE
+        (One-year file is saved.)
+
+    '''
+    gee_var = 'Band1'  # default var name for Daymet GEE data
+
+    time_units = 'days since 1850-01-01 00:00:00'
+
+    data_year_list = []
+
+    daymet_proj = '+proj=lcc +lat_0=42.5 +lon_0=-100 +lat_1=25 +lat_2=60 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +type=crs'
+    t = Transformer.from_crs(daymet_proj, 'epsg:4326', always_xy=True)
+
+    for fn in fn_list:
+        fn_load = Dataset(fn, 'r')
+        data = fn_load.variables[gee_var][:]
+#        data_ge0 = data[data < 0] = np.nan  # figure this out later - if there's water change to nans. This is messing up the shape of the data
+        data_units = fn_load.variables[gee_var].units
+        data_year_list.append(data)
+
+        if fn == fn_list[-1]:  # gee Daymet data doesn't come with latlons for some super annoying reason, so we'll create them here
+            x = fn_load.variables['x'][:]
+            y = fn_load.variables['y'][:]
+            xx, yy = np.meshgrid(x, y)
+            lons, lats = t.transform(xx, yy)
+#            lats = fn_load.variables['lat'][:]
+#            lons = fn_load.variables['lon'][:]
+        fn_load.close()
+
+    data_year_array = np.array(data_year_list)
+
+    # turn daily dates into 'days since' as specificed by user
+    dates = [day.to_pydatetime() for day in dates]
+    time = date2num(dates, units=time_units, calendar='proleptic_gregorian')
+
+    # save NetCDF
+    saveNetCDF(data_year_array, var_name, data_units, save_fn, '', lats, lons, time, time_units, var_name, 'lcc')
+
+    return
+
+
+###
+
 
 def downloadDaymetLatLonBox(var, loc, region, year, lon1, lon2, lat1, lat2):
     '''
@@ -52,6 +126,80 @@ def downloadDaymetLatLonBox(var, loc, region, year, lon1, lon2, lat1, lat2):
 ###
 
 
+def downloadDaymetGee(var, loc, region, year, lon1, lon2, lat1, lat2):
+    '''
+    
+    Download a site-specific lat/lon box of Daymet data for a specified variable and year from Google Earth Engine
+    https://developers.google.com/earth-engine/datasets/catalog/NASA_ORNL_DAYMET_V4#bands.
+    
+    Parameters
+    ----------
+    var : str
+        Variable to download.
+    loc : str
+        Location of site-specific lat/lon box. Becomes prefix for saved data filename.
+    region : str
+        Daymet region dataset ('na', 'pr', 'hi').
+    year : int
+        Year for data download.
+    lon1 : float
+        West longitude of download box.
+    lon2 : float
+        East longitude of download box.
+    lat1 : float
+        South latitude of download box.
+    lat2 : float
+        North latitude of download box.    
+
+    Returns
+    -------
+    save_fn : str
+        Filename of downloaded daily data that has been merged into a year file.
+ 
+    '''
+
+    if year % 4 == 0:  # leap year
+        end_day = 30
+    else:
+        end_day = 31
+
+    dates = pd.date_range(start=f'{year}-01-01', end=f'{year}-12-{end_day}')  # end date is inclusive here
+
+    print(f'\nDownloading {var} data for {year}')
+
+    collection = 'NASA/ORNL/DAYMET_V4'  # for tasmax, tasmin
+
+    # geojson search polygon
+    latlonbox = {
+        'type': 'Polygon', 'coordinates': [[
+            (lon1, lat2), (lon1, lat1), (lon2, lat1), (lon2, lat2), (lon1, lat2)
+        ]]
+    }
+
+    gd.Initialize()
+
+    for dt in dates:
+        ee_im = ee.Image(f'{collection}/{dt.strftime("%Y%m%d")}').select(f'{var}')
+        im = gd.MaskedImage(ee_im)                                  
+        im.download(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif', region=latlonbox)#, scale=1000, crs='EPSG:3347')#'EPSG:4326')  # scale meters
+
+        gdal.Translate(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.nc', f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif', bandList=[1], format='NetCDF')
+        os.remove(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif')
+        
+    fn_list = glob.glob(f'{loc}_{var}_Daymet_daily_raw_{year}*.nc')
+    save_fn = f'{loc}_{var}_daymet_{region}_v4_daily_{year}.nc'
+    
+    daymet_gee_daily2yearly(var, year, fn_list, save_fn, dates)
+
+    for fn in fn_list:
+        os.remove(fn)
+
+    return save_fn
+
+
+###
+
+
 def closestNumberDivisible(n, m):
     '''
     
@@ -90,6 +238,91 @@ def closestNumberDivisible(n, m):
     # else n2 is the required closest number
     else:
         return n2
+
+
+###
+
+
+def regrid2latlon(nc_file, output_fn, min_grid_resolution, grid_file_descriptor) :
+    '''
+
+    Regrid Daymet Lambert Conformal Conic data to regular latlon grid.    
+
+    Parameters
+    ----------
+    nc_file : str
+        Filename (may or may not include path) of NetCDF file that is to be regridded.
+    output_fn : str
+        Filename (may or may not include path) for regridded NetCDF file output.
+    min_grid_resolution : float
+        Minimum desired resolution of output grid, in degrees (e.g. 0.008 for ~1km grid).
+        Average resolution of data will be used if it is coarser than the specified min_grid_resolution.
+    grid_file_descriptor : str
+        Text used in naming of the grid text file that will be produced for regridding, to distinguish it from other grid text files.
+
+    Returns
+    -------
+    grid_file: str
+        Filename of grid file used for remapping LCC to latlon grid
+        
+        (Output NetCDF file is saved to location specified in output_fn)    
+
+    '''
+    
+    print('regridding from lcc to latlon grid')
+    nc_file_open = Dataset(nc_file, 'r')
+    
+    for l in ['lon', 'lat']:
+        data = nc_file_open.variables[l][:]
+            
+        max_l, min_l = np.max(data), np.min(data)
+        min_max_diff = max_l - min_l
+        avg_res = np.abs(np.mean(np.diff(data)))  # avg resolution of lcc data
+
+        # use average resolution if coarser than user-provided resolution
+        if avg_res > min_grid_resolution:
+            grid_res = avg_res
+        else:
+            grid_res = min_grid_resolution
+
+        # calculate length of grid (and new max lat or lon) based on desired grid resolution
+        closest_n_length_l = closestNumber(min_max_diff, grid_res)
+        new_max_l = min_l + closest_n_length_l
+        l_size = int(np.abs((new_max_l - min_l) / grid_res))
+        
+        if l == 'lon':
+            min_lon = min_l
+            xsize = l_size
+            grid_res_lon = grid_res
+        elif l == 'lat':
+            min_lat = min_l
+            ysize = l_size
+            grid_res_lat = grid_res
+
+    # write grid.txt file for cdo remapbil    
+    grid_file = f'grid_{grid_file_descriptor}.txt'
+    gridsize = int(xsize * ysize)
+    
+    with open(grid_file, 'w') as f:
+        f.write('gridtype  = lonlat\n')
+        f.write('xname = lon\n')
+        f.write('yname = lat\n')
+        f.write('xlongname = longitude\n')
+        f.write('ylongname = latitude\n')
+        f.write('xunits = degrees_east\n')
+        f.write('yunits = degrees_north\n')
+        f.write(f'xsize = {xsize}\n')
+        f.write(f'ysize = {ysize}\n')
+        f.write(f'xfirst = {min_lon}\n')
+        f.write(f'yfirst = {min_lat}\n')
+        f.write(f'xinc = {grid_res_lon}\n')
+        f.write(f'yinc = {grid_res_lat}\n')
+        f.write(f'gridsize = {gridsize}\n')
+
+    print('remapping with cdo')
+    cdo.remapbil(grid_file, input=nc_file, output=output_fn, options='-z zip')
+
+    return grid_file
 
 
 ####
@@ -215,8 +448,7 @@ def cdoRemap(input_filename, output_filename, grid_filename, remap_method, optio
     elif remap_method == 'remaplaf':  # Largest area fraction remapping
         cdo.remaplaf(grid_filename, input=input_filename, output=output_filename, options=options)
 
-    return                                                                                                                                                                                                                                                              
-
+    return                                                                                                                                                                                                                                                      
 
 #####
 
@@ -338,7 +570,7 @@ def saveNetCDF(var_data, var_name, units, save_filename, description, lats, lons
         proj_var.latitude_of_projection_origin = 42.5
         proj_var.false_easting = 0.0
         proj_var.false_northing = 0.0
-        proj_var.standard_parallel = (25.,  60.)
+        proj_var.standard_parallel = (60., 25.) #(25.,  60.)
         proj_var.semi_major_axis = 6378137.0
         proj_var.inverse_flattening = 298.257223563
 
@@ -358,7 +590,9 @@ def saveNetCDF(var_data, var_name, units, save_filename, description, lats, lons
 
     out_file.close()
     
-        
+    return
+
+
 ###
 
 
@@ -399,7 +633,7 @@ def mv2GoogleBucket(filename, bucket, file_path_in_bucket, creds):
 
 def mergetime(single_year_filename, all_year_filename):
     '''
-    
+
     Merge multiple single-year NetCDF files into a single file
 
     Parameters
@@ -419,3 +653,5 @@ def mergetime(single_year_filename, all_year_filename):
     cdo.mergetime(input=f'{single_year_filename}', output=f'{all_year_filename}', options='-z zip')
 
     return
+
+
