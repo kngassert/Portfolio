@@ -14,13 +14,9 @@ from cdo import Cdo
 cdo = Cdo()
 cdo.debug = True
 
-
 ###
-
-
 def daymet_gee_daily2yearly(var_name, year, fn_list, save_fn, dates):
-    '''
-    
+    '''    
     Merge daily GEE files into a one-year file.
 
     Parameters
@@ -38,8 +34,8 @@ def daymet_gee_daily2yearly(var_name, year, fn_list, save_fn, dates):
     -------
     NONE
         (One-year file is saved.)
-
     '''
+    
     gee_var = 'Band1'  # default var name for Daymet GEE data
 
     time_units = 'days since 1850-01-01 00:00:00'
@@ -52,17 +48,14 @@ def daymet_gee_daily2yearly(var_name, year, fn_list, save_fn, dates):
     for fn in fn_list:
         fn_load = Dataset(fn, 'r')
         data = fn_load.variables[gee_var][:]
-#        data_ge0 = data[data < 0] = np.nan  # figure this out later - if there's water change to nans. This is messing up the shape of the data
         data_units = fn_load.variables[gee_var].units
         data_year_list.append(data)
 
-        if fn == fn_list[-1]:  # gee Daymet data doesn't come with latlons for some super annoying reason, so we'll create them here
+        if fn == fn_list[-1]:  # gee Daymet data doesn't come with latlons?!, so we'll create them here
             x = fn_load.variables['x'][:]
             y = fn_load.variables['y'][:]
             xx, yy = np.meshgrid(x, y)
             lons, lats = t.transform(xx, yy)
-#            lats = fn_load.variables['lat'][:]
-#            lons = fn_load.variables['lon'][:]
         fn_load.close()
 
     data_year_array = np.array(data_year_list)
@@ -82,7 +75,6 @@ def daymet_gee_daily2yearly(var_name, year, fn_list, save_fn, dates):
 
 def downloadDaymetLatLonBox(var, loc, region, year, lon1, lon2, lat1, lat2):
     '''
-    
     Download a site-specific lat/lon box of Daymet data for a specified variable and year.
 
     Parameters
@@ -108,7 +100,6 @@ def downloadDaymetLatLonBox(var, loc, region, year, lon1, lon2, lat1, lat2):
     -------
     downloaded_filename : str
         Filename of downloaded data.
- 
     '''
 
     if year % 4 == 0:  # leap year
@@ -128,7 +119,6 @@ def downloadDaymetLatLonBox(var, loc, region, year, lon1, lon2, lat1, lat2):
 
 def downloadDaymetGee(var, loc, region, year, lon1, lon2, lat1, lat2):
     '''
-    
     Download a site-specific lat/lon box of Daymet data for a specified variable and year from Google Earth Engine
     https://developers.google.com/earth-engine/datasets/catalog/NASA_ORNL_DAYMET_V4#bands.
     
@@ -155,7 +145,6 @@ def downloadDaymetGee(var, loc, region, year, lon1, lon2, lat1, lat2):
     -------
     save_fn : str
         Filename of downloaded daily data that has been merged into a year file.
- 
     '''
 
     if year % 4 == 0:  # leap year
@@ -181,7 +170,7 @@ def downloadDaymetGee(var, loc, region, year, lon1, lon2, lat1, lat2):
     for dt in dates:
         ee_im = ee.Image(f'{collection}/{dt.strftime("%Y%m%d")}').select(f'{var}')
         im = gd.MaskedImage(ee_im)                                  
-        im.download(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif', region=latlonbox)#, scale=1000, crs='EPSG:3347')#'EPSG:4326')  # scale meters
+        im.download(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif', region=latlonbox)
 
         gdal.Translate(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.nc', f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif', bandList=[1], format='NetCDF')
         os.remove(f'{loc}_{var}_Daymet_daily_raw_{dt.strftime("%Y%m%d")}.tif')
@@ -202,7 +191,6 @@ def downloadDaymetGee(var, loc, region, year, lon1, lon2, lat1, lat2):
 
 def closestNumberDivisible(n, m):
     '''
-    
     Find closest number (n) divisible by m
     
     Parameters
@@ -216,7 +204,6 @@ def closestNumberDivisible(n, m):
     -------
     n1 or n2 : float
         Closest number to n that is divisible by m.
- 
     '''
     
     # Find the quotient
@@ -245,7 +232,6 @@ def closestNumberDivisible(n, m):
 
 def regrid2latlon(nc_file, output_fn, min_grid_resolution, grid_file_descriptor) :
     '''
-
     Regrid Daymet Lambert Conformal Conic data to regular latlon grid.    
 
     Parameters
@@ -266,7 +252,6 @@ def regrid2latlon(nc_file, output_fn, min_grid_resolution, grid_file_descriptor)
         Filename of grid file used for remapping LCC to latlon grid
         
         (Output NetCDF file is saved to location specified in output_fn)    
-
     '''
     
     print('regridding from lcc to latlon grid')
@@ -330,7 +315,6 @@ def regrid2latlon(nc_file, output_fn, min_grid_resolution, grid_file_descriptor)
 
 def createGridFile(nc_file, grid_resolution, grid_filename, coarser_default=False):
     '''
-
     Create grid text file for use in CDO remapping of NetCDF latlon data to new, user-specified resolution.    
                      
     Parameters
@@ -350,7 +334,6 @@ def createGridFile(nc_file, grid_resolution, grid_filename, coarser_default=Fals
     -------
     NONE
         (Function saves a text file that CDO can use for regridding data; name == grid_filename).
-
     '''
     
     print(f'Creating grid information file for CDO remapping')
@@ -410,7 +393,6 @@ def createGridFile(nc_file, grid_resolution, grid_filename, coarser_default=Fals
 
 def cdoRemap(input_filename, output_filename, grid_filename, remap_method, options):
     '''
-
     Regrid NetCDF latlon data to new resolution using a prepared grid text file.
 
     Parameters
@@ -429,8 +411,7 @@ def cdoRemap(input_filename, output_filename, grid_filename, remap_method, optio
     Returns
     -------
     NONE
-        (Output NetCDF file is saved to location specified in output_filename).
-        
+        (Output NetCDF file is saved to location specified in output_filename). 
     '''
     
     print(f'Regridding {input_filename}')
@@ -455,7 +436,6 @@ def cdoRemap(input_filename, output_filename, grid_filename, remap_method, optio
 
 def loadDaymetDims(nc_file, year):
     '''
-
     Load Daymet NetCDF file (containing one year of data), return dimension data
     (lats, lons, time).
     Add extra day to time array for leap years (Daymet has no 12/31 in leap years).
@@ -477,7 +457,6 @@ def loadDaymetDims(nc_file, year):
         Time values of file.
     time_units : str
         String containing units of time (e.g. 'days since 1850-1-1 00:00:00').
-
     '''
 
     lats = nc_file.variables['lat'][:]    
@@ -498,7 +477,6 @@ def loadDaymetDims(nc_file, year):
 
 def saveNetCDF(var_data, var_name, units, save_filename, description, lats, lons, time, time_units, standard_name, projection):
     '''
-    
     Save NetCDF file based on input parameters.
 
     Parameters
@@ -529,8 +507,7 @@ def saveNetCDF(var_data, var_name, units, save_filename, description, lats, lons
     Returns
     -------
     NONE
-        (NetCDF file is saved as output)
-        
+        (NetCDF file is saved as output) 
     '''
 
     print(f'saving {var_name} .nc')
@@ -598,7 +575,6 @@ def saveNetCDF(var_data, var_name, units, save_filename, description, lats, lons
 
 def mv2GoogleBucket(filename, bucket, file_path_in_bucket, creds):
     '''
-    
     Upload data to Google Cloud bucket.
 
     Parameters
@@ -615,7 +591,6 @@ def mv2GoogleBucket(filename, bucket, file_path_in_bucket, creds):
     -------
     NONE
         (File is uploaded to specified Google Cloud bucket path)
-
     '''
     
     print(f'Moving {filename} to Google Bucket')
@@ -633,7 +608,6 @@ def mv2GoogleBucket(filename, bucket, file_path_in_bucket, creds):
 
 def mergetime(single_year_filename, all_year_filename):
     '''
-
     Merge multiple single-year NetCDF files into a single file
 
     Parameters
@@ -647,7 +621,6 @@ def mergetime(single_year_filename, all_year_filename):
     -------
     NONE
         (Files are merged into a single file)
-
     '''
 
     cdo.mergetime(input=f'{single_year_filename}', output=f'{all_year_filename}', options='-z zip')
