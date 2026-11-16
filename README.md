@@ -11,6 +11,9 @@ Daymet_download_data_latlonbox.py, daymet_functions.py:<br>
 distribution_plot_multiple_cities_Daymet.ipynb:<br> 
 - Jupyter Notebook to create temperature distribution plots for multiple locations and time periods.
 
+Eudora_TES_RHB_map.png:<br>
+- Maps depicting Tree Equity Scores and Relative Heat Burden for the town of Eudora, Arkansas.
+
 Gassert_AGUpresentation.pdf:<br>
 - This PDF accompanied my oral presentation given at the AGU (American Geophysical Union) Fall 2014 meeting. It showcased my undergraduate research work as a Climate Assessment Intern at the North Carolina Cooperative Institute for Climate and Satellites (CICS-NC), where I investigated rainfall correlation drop off rates across CONUS using gridded Stage IV radar data to determine sufficient coverage of GHCN-Daily in-situ gauges.
 
